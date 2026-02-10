@@ -15,10 +15,10 @@ interface BarGraphProps<T> {
   xKey: keyof T;
   bars: { dataKey: keyof T; color: string; name: string }[];
   height?: number;
-  xFormatter?: (v: any) => string;
+  xFormatter?: (v: T[keyof T]) => string;
 }
 
-export default function BarGraph<T extends Record<string, any>>({
+export default function BarGraph<T extends Record<string, unknown>>({
   data,
   xKey,
   bars,

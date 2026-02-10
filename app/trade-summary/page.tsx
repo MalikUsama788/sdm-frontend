@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useSession } from 'next-auth/react';
 import Table from '@/app/components/Table';
 import { Trade } from '@/types/trades';
+
+const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
 type StockSummary = {
   stockCode: string;
@@ -60,48 +62,35 @@ export default function TradeSummaryPage() {
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(1);
 
-  const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
+  const fetchTrades = useCallback(
+    async (page: number) => {
+      if (!session?.jwt) return;
 
-  const fetchTrades = async (page: number) => {
-    if (!session?.jwt) return;
+      try {
+        setLoading(true);
+        setError(null);
 
-    try {
-      setLoading(true);
-      setError(null);
+        const response = await axios.get(
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:asc&filters[user][id]=${session.user?.id}&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}`,
+          {
+            headers: { Authorization: `Bearer ${session.jwt}` },
+          }
+        );
 
-      const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:asc&filters[user][id]=${session.user?.id}&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}`,
-        {
-          headers: { Authorization: `Bearer ${session.jwt}` },
-        }
-      );
-
-      setTrades(response.data.data);
-      setPageCount(response.data.meta?.pagination?.pageCount || 1);
-    } catch {
-      setError('Failed to fetch trades');
-    } finally {
-      setLoading(false);
-    }
-  };
+        setTrades(response.data.data);
+        setPageCount(response.data.meta?.pagination?.pageCount || 1);
+      } catch {
+        setError('Failed to fetch trades');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [session, PAGE_SIZE]
+  );
 
   useEffect(() => {
     fetchTrades(page);
-  }, [session, page]);
-
-  if (loading)
-    return (
-      <div className="bg-white shadow rounded-lg p-6 mb-8">
-        Loading stock summary...
-      </div>
-    );
-
-  if (error)
-    return (
-      <div className="bg-white shadow rounded-lg p-6 mb-8 text-red-500">
-        {error}
-      </div>
-    );
+  }, [fetchTrades, page]);
 
   const summaries = calculateStockSummaries(trades);
 
@@ -131,6 +120,20 @@ export default function TradeSummaryPage() {
         }).format(row.totalPrice),
     },
   ];
+
+  if (loading)
+    return (
+      <div className="bg-white shadow rounded-lg p-6 mb-8">
+        Loading stock summary...
+      </div>
+    );
+
+  if (error)
+    return (
+      <div className="bg-white shadow rounded-lg p-6 mb-8 text-red-500">
+        {error}
+      </div>
+    );
 
   return (
     <div className="bg-white shadow rounded-lg p-6 mb-8 w-full">

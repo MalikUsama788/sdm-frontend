@@ -9,24 +9,22 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { format } from 'date-fns';
 
 interface LineGraphProps<T> {
   data: T[];
   xKey: keyof T;
   lines: { dataKey: keyof T; color: string; name: string }[];
   height?: number;
-  xFormatter?: (value: any) => string;
+  xFormatter?: (value: T[keyof T]) => string;
 }
 
-export default function LineGraph<T extends Record<string, any>>({
+export default function LineGraph<T extends Record<string, unknown>>({
   data,
   xKey,
   lines,
   height = 400,
   xFormatter,
 }: LineGraphProps<T>) {
-  // Calculate Y-axis min/max with padding
   const yValues: number[] = [];
   data.forEach((row) => {
     lines.forEach((l) => {
@@ -37,7 +35,7 @@ export default function LineGraph<T extends Record<string, any>>({
 
   const yMin = yValues.length ? Math.min(...yValues) : 0;
   const yMax = yValues.length ? Math.max(...yValues) : 1;
-  const padding = (yMax - yMin) * 0.1 || 1; // 10% padding or 1 if all 0
+  const padding = (yMax - yMin) * 0.1 || 1;
 
   return (
     <ResponsiveContainer width="100%" height={height}>

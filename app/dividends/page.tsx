@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import type { Dividend } from '@/types/dividends';
 import axios from 'axios';
 import { useSession } from 'next-auth/react';
 import Table from '@/app/components/Table';
 import LineGraph from '@/app/components/LineGraph';
 import BarGraph from '@/app/components/BarGraph';
-import { format, parse, isValid, subMonths, subYears } from 'date-fns';
+import { format, subMonths, subYears } from 'date-fns';
 import { formatDateWithSuffix } from '@/utils/format';
+
+const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
 type DateFilterType = '3M' | '6M' | '1Y' | '2Y' | '5Y' | 'ALL';
 
@@ -29,7 +31,9 @@ type DividendGraphData = {
   dateFilter: DateFilterType;
 };
 
-const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
+interface StrapiMeta {
+  pagination?: { pageCount: number };
+}
 
 export default function DividendsPage() {
   const { data: session } = useSession();
@@ -42,25 +46,16 @@ export default function DividendsPage() {
   const [selectedDateFilter, setSelectedDateFilter] =
     useState<DateFilterType>('1Y');
 
-  // Date Formatting
-  const parseAnyDate = (d?: string): Date | null => {
-    if (!d) return null;
-    let dt = parse(d, 'MM/dd/yyyy', new Date());
-    if (isValid(dt)) return dt;
-    dt = new Date(d);
-    if (isValid(dt)) return dt;
-    return null;
-  };
-
   // Number Formatting
-  const parseNumber = (v: any): number => {
+  const parseNumber = (v: unknown): number => {
     if (v == null) return 0;
     if (typeof v === 'number') return v;
-    const cleaned = String(v)
-      .replace(/,/g, '')
-      .replace(/[^\d.-]/g, '');
-    const n = Number(cleaned);
-    return isNaN(n) ? 0 : n;
+    if (typeof v === 'string') {
+      const cleaned = v.replace(/,/g, '').replace(/[^\d.-]/g, '');
+      const n = Number(cleaned);
+      return isNaN(n) ? 0 : n;
+    }
+    return 0;
   };
 
   // Date filter
@@ -92,76 +87,84 @@ export default function DividendsPage() {
   };
 
   // Get all Records
-  const fetchAllPages = async (startDate: string | null) => {
-    if (!session?.jwt) return [];
+  const fetchAllPages = useCallback(
+    async (startDate: string | null): Promise<Dividend[]> => {
+      if (!session?.jwt) return [];
 
-    const pageSize = 100;
-    let page = 1;
-    let totalPages = 1;
-    let all: Dividend[] = [];
+      const pageSize = 100;
+      let page = 1;
+      let totalPages = 1;
+      let all: Dividend[] = [];
 
-    while (page <= totalPages) {
-      const params: Record<string, any> = {
-        'pagination[page]': page,
-        'pagination[pageSize]': pageSize,
-        sort: 'creditDate:asc',
-        populate: 'stock',
-      };
-      if (startDate) {
-        params['filters[creditDate][$gte]'] = startDate;
+      while (page <= totalPages) {
+        const params: Record<string, string | number> = {
+          'pagination[page]': page,
+          'pagination[pageSize]': pageSize,
+          sort: 'creditDate:asc',
+          populate: 'stock',
+        };
+        if (startDate) {
+          params['filters[creditDate][$gte]'] = startDate;
+        }
+
+        const resp = await axios.get<{ data: Dividend[]; meta?: StrapiMeta }>(
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/dividends`,
+          {
+            headers: { Authorization: `Bearer ${session.jwt}` },
+            params,
+          }
+        );
+
+        all = all.concat(resp.data.data);
+        totalPages = resp.data.meta?.pagination?.pageCount || 1;
+        page++;
       }
 
-      const resp = await axios.get<{ data: Dividend[]; meta?: any }>(
-        `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/dividends`,
-        {
-          headers: { Authorization: `Bearer ${session.jwt}` },
-          params,
-        }
-      );
-
-      all = all.concat(resp.data.data);
-      totalPages = resp.data.meta?.pagination?.pageCount || 1;
-      page++;
-    }
-
-    return all;
-  };
+      return all;
+    },
+    [session?.jwt]
+  );
 
   // Get Dividends
-  const fetchDividendData = async (dateFilter: DateFilterType) => {
-    if (!session?.jwt) return;
+  const fetchDividendData = useCallback(
+    async (dateFilter: DateFilterType) => {
+      if (!session?.jwt) return;
 
-    try {
-      setLoading(true);
-      setError(null);
-      setSelectedDateFilter(dateFilter);
+      try {
+        setLoading(true);
+        setError(null);
+        setSelectedDateFilter(dateFilter);
 
-      const startDate = getStartDate(dateFilter);
-      const allRecords = await fetchAllPages(startDate);
+        const startDate = getStartDate(dateFilter);
+        const allRecords = await fetchAllPages(startDate);
 
-      if (!allRecords || allRecords.length === 0) {
-        setDividendGraphs([]);
-      } else {
-        const graphItem: DividendGraphData = {
-          type: 'Dividend',
-          records: allRecords,
-          showTable: false,
-          currentPage: 1,
-          dateFilter,
-        };
-        setDividendGraphs([graphItem]);
+        if (!allRecords || allRecords.length === 0) {
+          setDividendGraphs([]);
+        } else {
+          const graphItem: DividendGraphData = {
+            type: 'Dividend',
+            records: allRecords,
+            showTable: false,
+            currentPage: 1,
+            dateFilter,
+          };
+          setDividendGraphs([graphItem]);
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error)
+          setError('Failed to load dividends: ' + (err?.message ?? err));
+        else setError('Failed to load dividends');
+      } finally {
+        setLoading(false);
       }
-    } catch (err: any) {
-      setError('Failed to load dividends: ' + (err?.message ?? err));
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [session?.jwt, fetchAllPages]
+  );
 
   // On Page Load
   useEffect(() => {
     fetchDividendData(selectedDateFilter);
-  }, [session]);
+  }, [session, selectedDateFilter, fetchDividendData]);
 
   // Show/Hide Table
   const toggleTable = () => {
@@ -179,8 +182,6 @@ export default function DividendsPage() {
   const getStockWiseTotals = (records: Dividend[]): GraphData[] => {
     const map: Record<string, GraphData> = {};
     records.forEach((r) => {
-      const dateStr = r.creditDate ?? r.dateHoldStock ?? r.dateAnnounced;
-      const d = parseAnyDate(dateStr);
       const stock = r.stock?.stockCode?.trim() || 'N/A';
       const dv = parseNumber(r.dividendValue);
       const dp = parseNumber(r.dividendPercentage);
@@ -234,11 +235,6 @@ export default function DividendsPage() {
           row.creditDate || row.dateHoldStock || row.dateAnnounced || ''
         ),
     },
-    // {
-    //   key: 'dividendPercentage',
-    //   header: '% Dividend',
-    //   accessor: (row: Dividend) => row.dividendPercentage || '0',
-    // },
     {
       key: 'dividendValue',
       header: 'Dividend Value',
@@ -249,11 +245,6 @@ export default function DividendsPage() {
           minimumFractionDigits: 0,
         }).format(parseNumber(row.dividendValue)),
     },
-    // {
-    //   key: 'numberOfShares',
-    //   header: 'Shares',
-    //   accessor: (row: Dividend) => row.numberOfShares || 0,
-    // },
     {
       key: 'amountBeforeTax',
       header: 'Amount Before Tax',
@@ -388,16 +379,6 @@ export default function DividendsPage() {
                         color: '#8884d8',
                         name: 'Dividend Value',
                       },
-                      // {
-                      //   dataKey: 'dividendPercentage',
-                      //   color: '#ff7300',
-                      //   name: 'Dividend Percentage',
-                      // },
-                      // {
-                      //   dataKey: 'numberOfShares',
-                      //   color: '#FF1493',
-                      //   name: 'Number of Shares',
-                      // },
                       {
                         dataKey: 'amountBeforeTax',
                         color: '#82ca9d',
@@ -422,16 +403,6 @@ export default function DividendsPage() {
                         color: '#8884d8',
                         name: 'Dividend Value',
                       },
-                      // {
-                      //   dataKey: 'dividendPercentage',
-                      //   color: '#ff7300',
-                      //   name: 'Dividend Percentage',
-                      // },
-                      // {
-                      //   dataKey: 'numberOfShares',
-                      //   color: '#FF1493',
-                      //   name: 'Number of Shares',
-                      // },
                       {
                         dataKey: 'amountBeforeTax',
                         color: '#82ca9d',

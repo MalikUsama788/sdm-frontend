@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useSession } from 'next-auth/react';
 import Table from '@/app/components/Table';
+
+const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
 type Stock = {
   id: number;
@@ -75,49 +77,37 @@ export default function HoldingsPage() {
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(1);
 
-  const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
+  const fetchTrades = useCallback(
+    async (page: number) => {
+      if (!session?.jwt || !session?.user?.id) return;
 
-  const fetchTrades = async (page: number) => {
-    if (!session?.jwt || !session?.user?.id) return;
+      try {
+        setLoading(true);
+        setError(null);
 
-    try {
-      setLoading(true);
-      setError(null);
+        const response = await axios.get(
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:asc&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}&filters[user][id]=${session.user.id}`,
+          {
+            headers: { Authorization: `Bearer ${session.jwt}` },
+          }
+        );
 
-      const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:asc&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}&filters[user][id]=${session.user.id}`,
-        {
-          headers: { Authorization: `Bearer ${session.jwt}` },
-        }
-      );
-
-      const trades: Trade[] = response.data.data;
-      const calculatedHoldings = calculateHoldings(trades);
-      setHoldings(calculatedHoldings);
-      setPageCount(response.data.meta?.pagination?.pageCount || 1);
-    } catch {
-      setError('Failed to fetch holdings');
-    } finally {
-      setLoading(false);
-    }
-  };
+        const trades: Trade[] = response.data.data;
+        const calculatedHoldings = calculateHoldings(trades);
+        setHoldings(calculatedHoldings);
+        setPageCount(response.data.meta?.pagination?.pageCount || 1);
+      } catch {
+        setError('Failed to fetch holdings');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [session, PAGE_SIZE]
+  );
 
   useEffect(() => {
     fetchTrades(page);
-  }, [session, page]);
-
-  if (loading)
-    return (
-      <div className="bg-white shadow rounded-lg p-6 mb-8">
-        Loading holdings...
-      </div>
-    );
-  if (error)
-    return (
-      <div className="bg-white shadow rounded-lg p-6 mb-8 text-red-500">
-        {error}
-      </div>
-    );
+  }, [fetchTrades, page]);
 
   const columns = [
     {
@@ -137,6 +127,19 @@ export default function HoldingsPage() {
         }).format(h.avgBuyRate),
     },
   ];
+
+  if (loading)
+    return (
+      <div className="bg-white shadow rounded-lg p-6 mb-8">
+        Loading holdings...
+      </div>
+    );
+  if (error)
+    return (
+      <div className="bg-white shadow rounded-lg p-6 mb-8 text-red-500">
+        {error}
+      </div>
+    );
 
   return (
     <div className="bg-white shadow rounded-lg p-6 mb-8 w-full">

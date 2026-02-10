@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import type { MyTotalsWithIndex } from '@/types/myTotalsWithIndex';
 import type { InvestmentLog } from '@/types/investmentLog';
 import axios from 'axios';
@@ -10,17 +10,40 @@ import LineGraph from '@/app/components/LineGraph';
 import BarGraph from '@/app/components/BarGraph';
 import { format, startOfMonth, startOfYear, subDays, parse } from 'date-fns';
 
+const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
+
 type DateFilterType = 'L30' | 'MTD' | 'YTD' | 'FYTD';
 
 type IndexGraphData = {
   index: string;
-  records: (MyTotalsWithIndex & { investment: number })[];
+  records: (MyTotalsWithIndex & {
+    investment: number;
+    __dateObj: Date;
+    __dateKey: string;
+    totatNowValue?: number;
+  })[];
   showTable: boolean;
   currentPage: number;
   dateFilter: DateFilterType;
 };
 
-const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
+type PaginationMeta = {
+  pagination: {
+    page: number;
+    pageSize: number;
+    pageCount: number;
+    total: number;
+  };
+};
+
+type PaginatedResponse<T> = {
+  data: T[];
+  meta?: PaginationMeta;
+};
+
+type InvestmentLogWithTot = Omit<InvestmentLog, 'totatNow'> & {
+  totatNow?: number;
+};
 
 export default function MyTotalsWithIndexPage() {
   const { data: session } = useSession();
@@ -34,11 +57,10 @@ export default function MyTotalsWithIndexPage() {
     useState<DateFilterType>('L30');
 
   // Date Formatting
-  const parseAnyDate = (d: string) => {
+  const parseAnyDate = (d: string): Date => {
     const tryMd = parse(d, 'MM/dd/yyyy', new Date());
     if (!isNaN(tryMd.getTime())) return tryMd;
-    const iso = new Date(d);
-    return iso;
+    return new Date(d);
   };
 
   // Date filter
@@ -70,160 +92,157 @@ export default function MyTotalsWithIndexPage() {
   };
 
   // Get All Pages Records
-  const fetchAllPages = async <T,>(
-    urlBase: string,
-    commonQuery: Record<string, string>
-  ): Promise<T[]> => {
-    const pageSize = 100;
-    let page = 1;
-    let all: T[] = [];
-    let totalPages = 1;
+  const fetchAllPages = useCallback(
+    async <T,>(
+      urlBase: string,
+      commonQuery: Record<string, string>
+    ): Promise<T[]> => {
+      const pageSize = 100;
+      let page = 1;
+      let all: T[] = [];
+      let totalPages = 1;
 
-    while (page <= totalPages) {
-      const params = new URLSearchParams({
-        ...commonQuery,
-        'pagination[page]': String(page),
-        'pagination[pageSize]': String(pageSize),
-      });
+      while (page <= totalPages) {
+        const params = new URLSearchParams({
+          ...commonQuery,
+          'pagination[page]': String(page),
+          'pagination[pageSize]': String(pageSize),
+        });
 
-      const resp = await axios.get<{ data: T[]; meta?: any }>(
-        `${urlBase}?${params.toString()}`,
-        {
-          headers: { Authorization: `Bearer ${session?.jwt}` },
-        }
-      );
+        const resp = await axios.get<PaginatedResponse<T>>(
+          `${urlBase}?${params.toString()}`,
+          {
+            headers: { Authorization: `Bearer ${session?.jwt}` },
+          }
+        );
 
-      all = all.concat(resp.data.data);
-      totalPages = resp.data.meta?.pagination?.pageCount || 1;
-      page++;
-    }
+        all = all.concat(resp.data.data);
+        totalPages = resp.data.meta?.pagination?.pageCount || 1;
+        page++;
+      }
 
-    return all;
-  };
+      return all;
+    },
+    [session?.jwt]
+  );
 
   // Get My Totals, Investment Logs and Merge
-  const fetchData = async (dateFilter: DateFilterType) => {
-    if (!session?.jwt) return;
-    try {
-      setLoading(true);
-      setError(null);
-      setSelectedDateFilter(dateFilter);
+  const fetchData = useCallback(
+    async (dateFilter: DateFilterType) => {
+      if (!session?.jwt) return;
 
-      const startDate = getStartDate(dateFilter);
+      try {
+        setLoading(true);
+        setError(null);
+        setSelectedDateFilter(dateFilter);
 
-      // Fetch all My Totals records
-      const myTotalsAll = await fetchAllPages<MyTotalsWithIndex>(
-        `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/my-total-with-indices`,
-        {
-          sort: 'date:asc',
-          'filters[date][$gte]': startDate,
-        }
-      );
+        const startDate = getStartDate(dateFilter);
 
-      // Fetch all Investment Logs records
-      const allInvestments = await fetchAllPages<InvestmentLog>(
-        `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/investment-logs`,
-        {
-          sort: 'dateOfInvestment:asc',
-          'filters[dateOfInvestment][$gte]': startDate,
-        }
-      );
+        // Fetch all My Totals records
+        const myTotalsAll = await fetchAllPages<MyTotalsWithIndex>(
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/my-total-with-indices`,
+          {
+            sort: 'date:asc',
+            'filters[date][$gte]': startDate,
+          }
+        );
 
-      // Fetch last one from Investment Logs records based on applied filter
-      const prevInvestmentResp = await axios.get<{ data: InvestmentLog[] }>(
-        `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/investment-logs`,
-        {
+        // Fetch all Investment Logs records
+        const allInvestments = await fetchAllPages<InvestmentLogWithTot>(
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/investment-logs`,
+          {
+            sort: 'dateOfInvestment:asc',
+            'filters[dateOfInvestment][$gte]': startDate,
+          }
+        );
+
+        // Fetch last one from Investment Logs records based on applied filter
+        const prevInvestmentResp = await axios.get<
+          PaginatedResponse<InvestmentLogWithTot>
+        >(`${process.env.NEXT_PUBLIC_STRAPI_URL}/api/investment-logs`, {
           headers: { Authorization: `Bearer ${session?.jwt}` },
           params: {
             sort: 'dateOfInvestment:desc',
             'filters[dateOfInvestment][$lt]': startDate,
             'pagination[pageSize]': '1',
           },
-        }
-      );
+        });
 
-      // Embed last one record data into Investments
-      const prevInvestment = prevInvestmentResp.data.data[0];
-      const investmentsAll = prevInvestment
-        ? [prevInvestment, ...allInvestments]
-        : allInvestments;
+        // Embed last one record data into Investments
+        const prevInvestment = prevInvestmentResp.data.data[0];
+        const investmentsAll = prevInvestment
+          ? [prevInvestment, ...allInvestments]
+          : allInvestments;
 
-      // Get totatNow value from Investment Logs
-      const normalizedInv = investmentsAll
-        .map((inv) => {
-          const dateObj = parseAnyDate(inv.dateOfInvestment);
-          const dateKey = format(dateObj, 'yyyy-MM-dd');
-          const tot = Number(
-            (inv as any).totatNow ?? (inv as any).totatNow ?? 0
-          );
+        // Get totatNow value from Investment Logs
+        const normalizedInv = investmentsAll
+          .map((inv) => {
+            const dateObj = parseAnyDate(inv.dateOfInvestment);
+            const dateKey = format(dateObj, 'yyyy-MM-dd');
+            const tot = Number(inv.totatNow ?? 0);
 
-          return {
-            ...inv,
-            __dateObj: dateObj,
-            __dateKey: dateKey,
-            totatNowValue: isNaN(tot) ? 0 : tot,
-          };
-        })
-        // Ascending Order by date
-        .sort(
-          (a, b) =>
-            (a as any).__dateObj.getTime() - (b as any).__dateObj.getTime()
-        );
+            return {
+              ...inv,
+              __dateObj: dateObj,
+              __dateKey: dateKey,
+              totatNowValue: isNaN(tot) ? 0 : tot,
+            };
+          })
+          // Ascending Order by date
+          .sort((a, b) => a.__dateObj.getTime() - b.__dateObj.getTime());
 
-      // Normalize My Totals records parse dates and create DateKey
-      const normalizedMyTotals = myTotalsAll
-        .map((r) => {
-          const dateObj = parseAnyDate(
-            (r as any).date ?? (r as any).Date ?? ''
-          );
-          const dateKey = format(dateObj, 'yyyy-MM-dd');
-          return {
-            ...r,
-            __dateObj: dateObj,
-            __dateKey: dateKey,
-          };
-        })
-        .sort(
-          (a, b) =>
-            (a as any).__dateObj.getTime() - (b as any).__dateObj.getTime()
-        );
+        // Normalize My Totals records parse dates and create DateKey
+        const normalizedMyTotals = myTotalsAll
+          .map((r) => {
+            const dateObj = parseAnyDate(r.date ?? '');
+            const dateKey = format(dateObj, 'yyyy-MM-dd');
+            return {
+              ...r,
+              __dateObj: dateObj,
+              __dateKey: dateKey,
+            };
+          })
+          .sort((a, b) => a.__dateObj.getTime() - b.__dateObj.getTime());
 
-      // For My Totals records, find last investment Log with date <= record.date
-      const mergedRecords = normalizedMyTotals.map((mt) => {
-        let lastVal = 0;
-        for (let i = 0; i < normalizedInv.length; i++) {
-          if (
-            (normalizedInv[i] as any).__dateObj.getTime() <=
-            (mt as any).__dateObj.getTime()
-          ) {
-            lastVal = (normalizedInv[i] as any).totatNowValue;
-          } else {
-            break;
+        // For My Totals records, find last investment Log with date <= record.date
+        const mergedRecords = normalizedMyTotals.map((mt) => {
+          let lastVal = 0;
+          for (let i = 0; i < normalizedInv.length; i++) {
+            if (
+              normalizedInv[i].__dateObj.getTime() <= mt.__dateObj.getTime()
+            ) {
+              lastVal = normalizedInv[i].totatNowValue ?? 0;
+            } else {
+              break;
+            }
           }
-        }
-        return { ...mt, investment: lastVal };
-      });
+          return { ...mt, investment: lastVal };
+        });
 
-      setIndexGraphs([
-        {
-          index: 'Stocks',
-          records: mergedRecords,
-          showTable: false,
-          currentPage: 1,
-          dateFilter,
-        },
-      ]);
-    } catch (err: any) {
-      setError('Failed to load data: ' + (err?.message ?? err));
-    } finally {
-      setLoading(false);
-    }
-  };
+        setIndexGraphs([
+          {
+            index: 'Stocks',
+            records: mergedRecords,
+            showTable: false,
+            currentPage: 1,
+            dateFilter,
+          },
+        ]);
+      } catch (err: unknown) {
+        if (err instanceof Error)
+          setError('Failed to load data: ' + err.message);
+        else setError('Failed to load data');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [session?.jwt, fetchAllPages]
+  );
 
   // On Page Load
   useEffect(() => {
     fetchData('L30');
-  }, [session]);
+  }, [fetchData]);
 
   // Date filter change
   const handleDateFilterChange = (filter: DateFilterType) => {
@@ -251,7 +270,7 @@ export default function MyTotalsWithIndexPage() {
       key: 'date',
       header: 'Date',
       accessor: (row: MyTotalsWithIndex & { investment?: number }) =>
-        format(parseAnyDate((row as any).date), 'MMM d, yyyy'),
+        format(parseAnyDate(row.date), 'MMM d, yyyy'),
     },
     {
       key: 'index',
@@ -272,7 +291,7 @@ export default function MyTotalsWithIndexPage() {
       key: 'investment',
       header: 'Investment',
       accessor: (row: MyTotalsWithIndex & { investment?: number }) =>
-        (row as any).investment ?? '-',
+        row.investment ?? '-',
     },
     {
       key: 'total',
@@ -369,7 +388,7 @@ export default function MyTotalsWithIndexPage() {
               <>
                 {graphType === 'line' ? (
                   <LineGraph
-                    data={g.records}
+                    data={g.records as unknown as Record<string, unknown>[]}
                     xKey="date"
                     lines={[
                       {
@@ -391,7 +410,7 @@ export default function MyTotalsWithIndexPage() {
                   />
                 ) : (
                   <BarGraph
-                    data={g.records}
+                    data={g.records as unknown as Record<string, unknown>[]}
                     xKey="date"
                     bars={[
                       {

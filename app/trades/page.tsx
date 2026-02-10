@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useSession } from 'next-auth/react';
 import { formatDateWithSuffix } from '@/utils/format';
@@ -8,6 +8,13 @@ import Table from '@/app/components/Table';
 import { Trade, TradesResponse } from '@/types/trades';
 
 const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
+
+interface AggregatedTrade {
+  stockCode: string;
+  stockTitle: string;
+  bought: number;
+  sold: number;
+}
 
 export default function Trades() {
   const { data: session } = useSession();
@@ -23,32 +30,37 @@ export default function Trades() {
 
   const [summaryPage, setSummaryPage] = useState(1);
 
-  const fetchTrades = async (page: number) => {
-    if (!session?.jwt) return;
+  const fetchTrades = useCallback(
+    async (page: number) => {
+      if (!session?.jwt) return;
 
-    try {
-      setLoadingTrades(true);
-      setError(null);
+      try {
+        setLoadingTrades(true);
+        setError(null);
 
-      const response = await axios.get<TradesResponse>(
-        `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:desc&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}&filters[user][id]=${session.user.id}`,
-        {
-          headers: {
-            Authorization: `Bearer ${session.jwt}`,
-          },
-        }
-      );
+        const response = await axios.get<TradesResponse>(
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:desc&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}&filters[user][id]=${session.user.id}`,
+          {
+            headers: {
+              Authorization: `Bearer ${session.jwt}`,
+            },
+          }
+        );
 
-      setTrades(response.data.data);
-      setPageCount(response.data.meta?.pagination?.pageCount || 1);
-    } catch (err) {
-      setError('Failed to fetch trades');
-    } finally {
-      setLoadingTrades(false);
-    }
-  };
+        setTrades(response.data.data);
+        setPageCount(response.data.meta?.pagination?.pageCount || 1);
+      } catch (err: unknown) {
+        if (err instanceof Error)
+          setError('Failed to fetch trades: ' + err.message);
+        else setError('Failed to fetch trades');
+      } finally {
+        setLoadingTrades(false);
+      }
+    },
+    [session]
+  );
 
-  const fetchAllTrades = async () => {
+  const fetchAllTrades = useCallback(async () => {
     if (!session?.jwt) return;
 
     try {
@@ -78,23 +90,25 @@ export default function Trades() {
       }
 
       setAllTrades(allRecords);
-    } catch (err: any) {
-      setError('Failed to fetch all trades: ' + (err.message ?? err));
+    } catch (err: unknown) {
+      if (err instanceof Error)
+        setError('Failed to fetch all trades: ' + err.message);
+      else setError('Failed to fetch all trades');
     } finally {
       setLoadingSummary(false);
     }
-  };
+  }, [session]);
 
   useEffect(() => {
     fetchTrades(page);
-  }, [session, page]);
+  }, [fetchTrades, page]);
 
   useEffect(() => {
     fetchAllTrades();
-  }, [session]);
+  }, [fetchAllTrades]);
 
   // Aggregate Trades per Stock
-  const aggregatedData = allTrades.reduce((acc, trade) => {
+  const aggregatedData: AggregatedTrade[] = allTrades.reduce((acc, trade) => {
     const stockCode = trade.stock?.stockCode || 'N/A';
     const existing = acc.find((s) => s.stockCode === stockCode);
     const shares = Number(trade.numberOfShares || 0);
@@ -112,7 +126,7 @@ export default function Trades() {
     }
 
     return acc;
-  }, [] as { stockCode: string; stockTitle: string; bought: number; sold: number }[]);
+  }, [] as AggregatedTrade[]);
 
   const summaryTotalPages = Math.ceil(aggregatedData.length / PAGE_SIZE);
   const paginatedSummary = aggregatedData.slice(
@@ -150,14 +164,23 @@ export default function Trades() {
     {
       key: 'stock',
       header: 'Stock',
-      accessor: (row: any) => `${row.stockCode} - ${row.stockTitle}`,
+      accessor: (row: AggregatedTrade) =>
+        `${row.stockCode} - ${row.stockTitle}`,
     },
-    { key: 'bought', header: 'Bought', accessor: (row: any) => row.bought },
-    { key: 'sold', header: 'Sold', accessor: (row: any) => row.sold },
+    {
+      key: 'bought',
+      header: 'Bought',
+      accessor: (row: AggregatedTrade) => row.bought,
+    },
+    {
+      key: 'sold',
+      header: 'Sold',
+      accessor: (row: AggregatedTrade) => row.sold,
+    },
     {
       key: 'net',
       header: 'Net',
-      accessor: (row: any) => row.bought - row.sold,
+      accessor: (row: AggregatedTrade) => row.bought - row.sold,
     },
   ];
 

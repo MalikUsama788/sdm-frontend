@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import type { InvestmentLog } from '@/types/investmentLog';
 import axios from 'axios';
 import { useSession } from 'next-auth/react';
@@ -8,6 +8,8 @@ import Table from '@/app/components/Table';
 import LineGraph from '@/app/components/LineGraph';
 import BarGraph from '@/app/components/BarGraph';
 import { parse, isValid, format } from 'date-fns';
+
+const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
 type DateFilterType = 'Monthly' | 'Yearly';
 
@@ -23,7 +25,19 @@ type InvestmentGraphData = {
   currentPage: number;
 };
 
-const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
+interface StrapiPagination {
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  total: number;
+}
+
+interface StrapiResponse<T> {
+  data: T[];
+  meta?: {
+    pagination: StrapiPagination;
+  };
+}
 
 export default function InvestmentLogsPage() {
   const { data: session } = useSession();
@@ -48,7 +62,7 @@ export default function InvestmentLogsPage() {
   };
 
   // Get Dividends
-  const fetchAllInvestmentLogs = async () => {
+  const fetchAllInvestmentLogs = useCallback(async () => {
     if (!session?.jwt) return;
 
     try {
@@ -61,7 +75,7 @@ export default function InvestmentLogsPage() {
       const pageSize = 100;
 
       while (page <= totalPages) {
-        const resp = await axios.get<{ data: InvestmentLog[]; meta?: any }>(
+        const resp = await axios.get<StrapiResponse<InvestmentLog>>(
           `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/investment-logs`,
           {
             headers: { Authorization: `Bearer ${session.jwt}` },
@@ -87,17 +101,19 @@ export default function InvestmentLogsPage() {
           currentPage: 1,
         },
       ]);
-    } catch (err: any) {
-      setError('Failed to load investment logs: ' + (err.message ?? err));
+    } catch (err: unknown) {
+      if (err instanceof Error)
+        setError('Failed to load investment logs: ' + err.message);
+      else setError('Failed to load investment logs');
     } finally {
       setLoading(false);
     }
-  };
+  }, [session?.jwt]);
 
   // On Page Load
   useEffect(() => {
     fetchAllInvestmentLogs();
-  }, [session]);
+  }, [fetchAllInvestmentLogs]);
 
   // Date filter change
   const handleDateFilterChange = (filter: DateFilterType) => {
@@ -282,7 +298,7 @@ export default function InvestmentLogsPage() {
                         name: 'Total Investment',
                       },
                     ]}
-                    xFormatter={(d) => d}
+                    xFormatter={(d) => format(new Date(d), 'MMM d')}
                     height={300}
                   />
                 ) : (
@@ -296,7 +312,7 @@ export default function InvestmentLogsPage() {
                         name: 'Total Investment',
                       },
                     ]}
-                    xFormatter={(d) => d}
+                    xFormatter={(d) => format(new Date(d), 'MMM d')}
                     height={300}
                   />
                 )}

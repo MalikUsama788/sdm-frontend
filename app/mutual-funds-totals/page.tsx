@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import type { MutualFundsTotal } from '@/types/mutualFundsTotal';
 import axios from 'axios';
 import { useSession } from 'next-auth/react';
@@ -8,6 +8,8 @@ import Table from '@/app/components/Table';
 import LineGraph from '@/app/components/LineGraph';
 import BarGraph from '@/app/components/BarGraph';
 import { format, startOfMonth, startOfYear, subDays } from 'date-fns';
+
+const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
 type DateFilterType = 'L30' | 'MTD' | 'YTD' | 'FYTD';
 
@@ -18,8 +20,6 @@ type FundGraphData = {
   currentPage: number;
   dateFilter: DateFilterType;
 };
-
-const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
 export default function MutualFundsTotalsPage() {
   const { data: session } = useSession();
@@ -61,69 +61,74 @@ export default function MutualFundsTotalsPage() {
   };
 
   // Get Funds
-  const fetchFundData = async (dateFilter: DateFilterType) => {
-    if (!session?.jwt) return;
+  const fetchFundData = useCallback(
+    async (dateFilter: DateFilterType) => {
+      if (!session?.jwt) return;
 
-    try {
-      setLoading(true);
-      setError(null);
-      setSelectedDateFilter(dateFilter);
+      try {
+        setLoading(true);
+        setError(null);
+        setSelectedDateFilter(dateFilter);
 
-      const startDate = getStartDate(dateFilter);
-      const pageSize = 100;
-      let page = 1;
-      let allRecords: MutualFundsTotal[] = [];
-      let totalPages = 1;
+        const startDate = getStartDate(dateFilter);
+        const pageSize = 100;
+        let page = 1;
+        let allRecords: MutualFundsTotal[] = [];
+        let totalPages = 1;
 
-      while (page <= totalPages) {
-        const query = new URLSearchParams({
-          sort: 'date:asc',
-          'pagination[page]': page.toString(),
-          'pagination[pageSize]': pageSize.toString(),
-          'filters[date][$gte]': format(startDate, 'yyyy-MM-dd'),
-        });
+        while (page <= totalPages) {
+          const query = new URLSearchParams({
+            sort: 'date:asc',
+            'pagination[page]': page.toString(),
+            'pagination[pageSize]': pageSize.toString(),
+            'filters[date][$gte]': format(startDate, 'yyyy-MM-dd'),
+          });
 
-        const response = await axios.get<{
-          data: MutualFundsTotal[];
-          meta: { pagination: { pageCount: number } };
-        }>(
-          `${
-            process.env.NEXT_PUBLIC_STRAPI_URL
-          }/api/my-mutual-funds-totals?${query.toString()}`,
-          {
-            headers: { Authorization: `Bearer ${session.jwt}` },
-          }
-        );
+          const response = await axios.get<{
+            data: MutualFundsTotal[];
+            meta: { pagination: { pageCount: number } };
+          }>(
+            `${
+              process.env.NEXT_PUBLIC_STRAPI_URL
+            }/api/my-mutual-funds-totals?${query.toString()}`,
+            {
+              headers: { Authorization: `Bearer ${session.jwt}` },
+            }
+          );
 
-        allRecords = allRecords.concat(response.data.data);
-        totalPages = response.data.meta.pagination.pageCount;
-        page++;
+          allRecords = allRecords.concat(response.data.data);
+          totalPages = response.data.meta.pagination.pageCount;
+          page++;
+        }
+
+        if (allRecords.length === 0) {
+          setFundGraphs([]);
+        } else {
+          const allFunds = Array.from(new Set(allRecords.map((r) => r.fund)));
+          const grouped: FundGraphData[] = allFunds.map((f) => ({
+            fund: f,
+            records: allRecords.filter((r) => r.fund === f),
+            showTable: false,
+            currentPage: 1,
+            dateFilter,
+          }));
+          setFundGraphs(grouped);
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error)
+          setError('Failed to load fund data: ' + err.message);
+        else setError('Failed to load fund data');
+      } finally {
+        setLoading(false);
       }
-
-      if (allRecords.length === 0) {
-        setFundGraphs([]);
-      } else {
-        const allFunds = Array.from(new Set(allRecords.map((r) => r.fund)));
-        const grouped: FundGraphData[] = allFunds.map((f) => ({
-          fund: f,
-          records: allRecords.filter((r) => r.fund === f),
-          showTable: false,
-          currentPage: 1,
-          dateFilter,
-        }));
-        setFundGraphs(grouped);
-      }
-    } catch (err) {
-      setError('Failed to load fund data: ' + err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [session]
+  );
 
   // On Page Load
   useEffect(() => {
     fetchFundData('L30');
-  }, [session]);
+  }, [fetchFundData]);
 
   // Date filter change
   const handleDateFilterChange = (filter: DateFilterType) => {
@@ -256,7 +261,7 @@ export default function MutualFundsTotalsPage() {
               <>
                 {graphType === 'line' ? (
                   <LineGraph
-                    data={g.records}
+                    data={g.records as unknown as Record<string, unknown>[]}
                     xKey="date"
                     lines={[
                       {
@@ -270,12 +275,16 @@ export default function MutualFundsTotalsPage() {
                         name: 'Total Value',
                       },
                     ]}
-                    xFormatter={(d) => format(new Date(d), 'MMM d')}
+                    xFormatter={(d) => {
+                      const date =
+                        d instanceof Date ? d : new Date(d as string | number);
+                      return format(date, 'MMM d');
+                    }}
                     height={300}
                   />
                 ) : (
                   <BarGraph
-                    data={g.records}
+                    data={g.records as unknown as Record<string, unknown>[]}
                     xKey="date"
                     bars={[
                       {
@@ -289,7 +298,11 @@ export default function MutualFundsTotalsPage() {
                         name: 'Total Value',
                       },
                     ]}
-                    xFormatter={(d) => format(new Date(d), 'MMM d')}
+                    xFormatter={(d) => {
+                      const date =
+                        d instanceof Date ? d : new Date(d as string | number);
+                      return format(date, 'MMM d');
+                    }}
                     height={300}
                   />
                 )}
