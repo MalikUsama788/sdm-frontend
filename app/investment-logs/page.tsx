@@ -22,6 +22,7 @@ type InvestmentGraphData = {
   type: string;
   records: InvestmentLog[];
   showTable: boolean;
+  showSummaryTable: boolean;
   currentPage: number;
 };
 
@@ -98,6 +99,7 @@ export default function InvestmentLogsPage() {
           type: 'SIP',
           records: allRecords,
           showTable: false,
+          showSummaryTable: false,
           currentPage: 1,
         },
       ]);
@@ -124,6 +126,15 @@ export default function InvestmentLogsPage() {
   const toggleTable = (type: string) => {
     setInvestmentData((prev) =>
       prev.map((d) => (d.type === type ? { ...d, showTable: !d.showTable } : d))
+    );
+  };
+
+  // Summary Table
+  const toggleSummaryTable = (type: string) => {
+    setInvestmentData((prev) =>
+      prev.map((d) =>
+        d.type === type ? { ...d, showSummaryTable: !d.showSummaryTable } : d
+      )
     );
   };
 
@@ -181,6 +192,24 @@ export default function InvestmentLogsPage() {
           cumulativeInvestment,
         }));
     }
+  };
+
+  // Summary Data
+  const getSummaryData = (
+    records: InvestmentLog[]
+  ): { period: string; total: number }[] => {
+    const map = new Map<string, number>();
+    records.forEach((r) => {
+      const dateObj = new Date(r.dateOfInvestment);
+      const key =
+        selectedDateFilter === 'Yearly'
+          ? String(dateObj.getFullYear())
+          : format(dateObj, 'yyyy-MM');
+      map.set(key, (map.get(key) || 0) + Number(r.amountInvested ?? 0));
+    });
+    return Array.from(map.entries())
+      .sort(([k1], [k2]) => k1.localeCompare(k2))
+      .map(([period, total]) => ({ period, total }));
   };
 
   const columns = [
@@ -270,6 +299,7 @@ export default function InvestmentLogsPage() {
           year: String(d.year),
           cumulativeInvestment: d.cumulativeInvestment,
         }));
+        const summaryData = getSummaryData(data.records);
 
         return (
           <div key={data.type} className="mb-10">
@@ -282,6 +312,15 @@ export default function InvestmentLogsPage() {
                   onChange={() => toggleTable(data.type)}
                 />
                 <span>Show Table</span>
+              </label>
+
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={data.showSummaryTable}
+                  onChange={() => toggleSummaryTable(data.type)}
+                />
+                <span>Show Summary Table</span>
               </label>
             </div>
 
@@ -317,14 +356,60 @@ export default function InvestmentLogsPage() {
                   />
                 )}
 
+                {data.showSummaryTable && (
+                  <div className="mb-4">
+                    <h4 className="text-md font-semibold text-gray-700 mb-2">
+                      {selectedDateFilter} Investment Summary
+                    </h4>
+                    <Table
+                      data={[...summaryData].sort(
+                        (a, b) =>
+                          new Date(
+                            b.period +
+                              (selectedDateFilter === 'Monthly' ? '-01' : '')
+                          ).getTime() -
+                          new Date(
+                            a.period +
+                              (selectedDateFilter === 'Monthly' ? '-01' : '')
+                          ).getTime()
+                      )}
+                      columns={[
+                        {
+                          key: 'period',
+                          header: selectedDateFilter + ' Period',
+                          accessor: (row: any) => row.period,
+                        },
+                        {
+                          key: 'total',
+                          header: 'Total Invested',
+                          accessor: (row: any) =>
+                            new Intl.NumberFormat('en-PK', {
+                              style: 'currency',
+                              currency: 'PKR',
+                              minimumFractionDigits: 0,
+                            }).format(row.total),
+                        },
+                      ]}
+                      currentPage={1}
+                      pageCount={1}
+                      onPageChange={() => {}}
+                    />
+                  </div>
+                )}
+
                 {data.showTable && (
-                  <Table
-                    data={paginatedData}
-                    columns={columns}
-                    currentPage={data.currentPage}
-                    pageCount={totalPages}
-                    onPageChange={(page) => handlePageChange(data.type, page)}
-                  />
+                  <div className="mb-4">
+                    <h4 className="text-md font-semibold text-gray-700 mb-2">
+                      Detailed Investment Records
+                    </h4>
+                    <Table
+                      data={paginatedData}
+                      columns={columns}
+                      currentPage={data.currentPage}
+                      pageCount={totalPages}
+                      onPageChange={(page) => handlePageChange(data.type, page)}
+                    />
+                  </div>
                 )}
               </>
             ) : (
