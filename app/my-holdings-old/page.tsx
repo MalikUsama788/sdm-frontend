@@ -102,7 +102,7 @@ export default function HoldingsPage() {
         setLoading(false);
       }
     },
-    [session, PAGE_SIZE]
+    [session]
   );
 
   useEffect(() => {

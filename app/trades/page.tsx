@@ -30,7 +30,7 @@ export default function Trades() {
         setLoadingTrades(true);
         setError(null);
 
-        const params: any = {
+        const params: Record<string, string | number> = {
           'pagination[pageSize]': PAGE_SIZE,
           'pagination[page]': page,
           sort: 'createdAt:desc',

@@ -377,12 +377,13 @@ export default function InvestmentLogsPage() {
                         {
                           key: 'period',
                           header: selectedDateFilter + ' Period',
-                          accessor: (row: any) => row.period,
+                          accessor: (row: { period: string; total: number }) =>
+                            row.period,
                         },
                         {
                           key: 'total',
                           header: 'Total Invested',
-                          accessor: (row: any) =>
+                          accessor: (row: { period: string; total: number }) =>
                             new Intl.NumberFormat('en-PK', {
                               style: 'currency',
                               currency: 'PKR',

@@ -85,7 +85,7 @@ export default function TradeSummaryPage() {
         setLoading(false);
       }
     },
-    [session, PAGE_SIZE]
+    [session]
   );
 
   useEffect(() => {
