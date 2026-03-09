@@ -12,11 +12,12 @@ export default function Header() {
   const navLinks = [
     { href: '/dashboard', label: 'Dashboard' },
     { href: '/trades', label: 'Trades' },
+    { href: '/my-holdings', label: 'My Holdings' },
     { href: '/dividends', label: 'Dividends' },
     { href: '/investment-logs', label: 'Investment Logs' },
     { href: '/my-totals-with-index', label: 'My Totals' },
     { href: '/mutual-funds-totals', label: 'Mutual Funds' },
-    { href: '/my-holdings', label: 'My Holdings' },
+    { href: '/my-holdings-old', label: 'My Holdings Old' },
     { href: '/trade-summary', label: 'Trade Summary' },
   ];
 

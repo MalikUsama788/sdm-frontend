@@ -9,26 +9,18 @@ import { Trade, TradesResponse } from '@/types/trades';
 
 const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
-interface AggregatedTrade {
-  stockCode: string;
-  stockTitle: string;
-  bought: number;
-  sold: number;
-}
-
 export default function Trades() {
   const { data: session } = useSession();
 
   const [trades, setTrades] = useState<Trade[]>([]);
-  const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [loadingTrades, setLoadingTrades] = useState(true);
-  const [loadingSummary, setLoadingSummary] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(1);
 
-  const [summaryPage, setSummaryPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [tradeType, setTradeType] = useState('');
 
   const fetchTrades = useCallback(
     async (page: number) => {
@@ -38,12 +30,29 @@ export default function Trades() {
         setLoadingTrades(true);
         setError(null);
 
+        const params: any = {
+          'pagination[pageSize]': PAGE_SIZE,
+          'pagination[page]': page,
+          sort: 'createdAt:desc',
+          populate: 'stock',
+          'filters[user][id]': session.user.id,
+        };
+
+        if (search) {
+          params['filters[stock][stockCode][$containsi]'] = search;
+        }
+
+        if (tradeType) {
+          params['filters[tradeType][$eq]'] = tradeType;
+        }
+
         const response = await axios.get<TradesResponse>(
-          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:desc&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}&filters[user][id]=${session.user.id}`,
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades`,
           {
             headers: {
               Authorization: `Bearer ${session.jwt}`,
             },
+            params,
           }
         );
 
@@ -57,82 +66,12 @@ export default function Trades() {
         setLoadingTrades(false);
       }
     },
-    [session]
+    [session, search, tradeType]
   );
-
-  const fetchAllTrades = useCallback(async () => {
-    if (!session?.jwt) return;
-
-    try {
-      setLoadingSummary(true);
-      setError(null);
-
-      let allRecords: Trade[] = [];
-      let page = 1;
-      let totalPages = 1;
-      const pageSize = 100;
-
-      while (page <= totalPages) {
-        const resp = await axios.get<TradesResponse>(
-          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:asc&filters[user][id]=${session.user.id}`,
-          {
-            headers: { Authorization: `Bearer ${session.jwt}` },
-            params: {
-              'pagination[page]': page,
-              'pagination[pageSize]': pageSize,
-            },
-          }
-        );
-
-        allRecords = allRecords.concat(resp.data.data);
-        totalPages = resp.data.meta?.pagination?.pageCount || 1;
-        page++;
-      }
-
-      setAllTrades(allRecords);
-    } catch (err: unknown) {
-      if (err instanceof Error)
-        setError('Failed to fetch all trades: ' + err.message);
-      else setError('Failed to fetch all trades');
-    } finally {
-      setLoadingSummary(false);
-    }
-  }, [session]);
 
   useEffect(() => {
     fetchTrades(page);
   }, [fetchTrades, page]);
-
-  useEffect(() => {
-    fetchAllTrades();
-  }, [fetchAllTrades]);
-
-  // Aggregate Trades per Stock
-  const aggregatedData: AggregatedTrade[] = allTrades.reduce((acc, trade) => {
-    const stockCode = trade.stock?.stockCode || 'N/A';
-    const existing = acc.find((s) => s.stockCode === stockCode);
-    const shares = Number(trade.numberOfShares || 0);
-
-    if (existing) {
-      if (trade.tradeType === 'Bought') existing.bought += shares;
-      else if (trade.tradeType === 'Sold') existing.sold += shares;
-    } else {
-      acc.push({
-        stockCode,
-        stockTitle: trade.stock?.stockTitle || '',
-        bought: trade.tradeType === 'Bought' ? shares : 0,
-        sold: trade.tradeType === 'Sold' ? shares : 0,
-      });
-    }
-
-    return acc;
-  }, [] as AggregatedTrade[]);
-
-  const summaryTotalPages = Math.ceil(aggregatedData.length / PAGE_SIZE);
-  const paginatedSummary = aggregatedData.slice(
-    (summaryPage - 1) * PAGE_SIZE,
-    summaryPage * PAGE_SIZE
-  );
 
   const tradeColumns = [
     {
@@ -160,31 +99,7 @@ export default function Trades() {
     },
   ];
 
-  const summaryColumns = [
-    {
-      key: 'stock',
-      header: 'Stock',
-      accessor: (row: AggregatedTrade) =>
-        `${row.stockCode} - ${row.stockTitle}`,
-    },
-    {
-      key: 'bought',
-      header: 'Bought',
-      accessor: (row: AggregatedTrade) => row.bought,
-    },
-    {
-      key: 'sold',
-      header: 'Sold',
-      accessor: (row: AggregatedTrade) => row.sold,
-    },
-    {
-      key: 'net',
-      header: 'Net',
-      accessor: (row: AggregatedTrade) => row.bought - row.sold,
-    },
-  ];
-
-  if (loadingTrades || loadingSummary)
+  if (loadingTrades)
     return (
       <div className="bg-white shadow rounded-lg p-6 mb-8">
         Loading Table...
@@ -203,6 +118,40 @@ export default function Trades() {
         Trades
       </h2>
 
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-6">
+        {/* Stock Search */}
+        <input
+          type="text"
+          placeholder="Search Stock (e.g. OGDC)"
+          defaultValue={search}
+          onBlur={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              setSearch((e.target as HTMLInputElement).value);
+              setPage(1);
+            }
+          }}
+          className="border border-gray-300 rounded-md p-1 w-full sm:w-auto md:w-64"
+        />
+
+        {/* Trade Type Filter */}
+        <select
+          value={tradeType}
+          onChange={(e) => {
+            setTradeType(e.target.value);
+            setPage(1);
+          }}
+          className="border border-gray-300 rounded-md p-2 text-sm w-full sm:w-auto"
+        >
+          <option value="">All</option>
+          <option value="Bought">Bought</option>
+          <option value="Sold">Sold</option>
+        </select>
+      </div>
+
       {trades.length > 0 ? (
         <Table
           data={trades}
@@ -210,22 +159,6 @@ export default function Trades() {
           currentPage={page}
           pageCount={pageCount}
           onPageChange={setPage}
-        />
-      ) : (
-        <p className="text-gray-500 text-center py-4">No Records found.</p>
-      )}
-
-      <h2 className="text-xl font-semibold mb-4 text-center sm:text-left mt-4">
-        Trades Summary
-      </h2>
-
-      {aggregatedData.length > 0 ? (
-        <Table
-          data={paginatedSummary}
-          columns={summaryColumns}
-          currentPage={summaryPage}
-          pageCount={summaryTotalPages}
-          onPageChange={setSummaryPage}
         />
       ) : (
         <p className="text-gray-500 text-center py-4">No Records found.</p>

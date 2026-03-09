@@ -4,134 +4,128 @@ import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useSession } from 'next-auth/react';
 import Table from '@/app/components/Table';
+import { Trade, TradesResponse } from '@/types/trades';
 
 const PAGE_SIZE = Number(process.env.NEXT_PUBLIC_DEFAULT_PAGE_SIZE) || 5;
 
-type Stock = {
-  id: number;
+interface AggregatedTrade {
   stockCode: string;
   stockTitle: string;
-};
-
-type Trade = {
-  id: number;
-  stock: Stock;
-  tradeType: 'Buy' | 'Sell';
-  numberOfShares: number;
-  tradeRate: number;
-};
-
-type Holding = {
-  stock: Stock;
-  shares: number;
-  avgBuyRate: number;
-};
-
-function calculateHoldings(trades: Trade[]): Holding[] {
-  const holdingsMap: Record<
-    string,
-    {
-      stock: Stock;
-      shares: number;
-      totalBuyAmount: number;
-      totalBuyShares: number;
-    }
-  > = {};
-
-  trades.forEach((trade) => {
-    const key = trade.stock.stockCode;
-
-    if (!holdingsMap[key]) {
-      holdingsMap[key] = {
-        stock: trade.stock,
-        shares: 0,
-        totalBuyAmount: 0,
-        totalBuyShares: 0,
-      };
-    }
-
-    if (trade.tradeType === 'Buy') {
-      holdingsMap[key].shares += trade.numberOfShares;
-      holdingsMap[key].totalBuyAmount += trade.numberOfShares * trade.tradeRate;
-      holdingsMap[key].totalBuyShares += trade.numberOfShares;
-    } else if (trade.tradeType === 'Sell') {
-      holdingsMap[key].shares -= trade.numberOfShares;
-    }
-  });
-
-  return Object.values(holdingsMap)
-    .filter((h) => h.shares > 0)
-    .map((h) => ({
-      stock: h.stock,
-      shares: h.shares,
-      avgBuyRate:
-        h.totalBuyShares > 0 ? h.totalBuyAmount / h.totalBuyShares : 0,
-    }));
+  bought: number;
+  sold: number;
 }
 
-export default function HoldingsPage() {
+export default function Trades() {
   const { data: session } = useSession();
-  const [holdings, setHoldings] = useState<Holding[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const [allTrades, setAllTrades] = useState<Trade[]>([]);
+  const [loadingSummary, setLoadingSummary] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [pageCount, setPageCount] = useState(1);
 
-  const fetchTrades = useCallback(
-    async (page: number) => {
-      if (!session?.jwt || !session?.user?.id) return;
+  const [summaryPage, setSummaryPage] = useState(1);
 
-      try {
-        setLoading(true);
-        setError(null);
+  const fetchAllTrades = useCallback(async () => {
+    if (!session?.jwt) return;
 
-        const response = await axios.get(
-          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:asc&pagination[pageSize]=${PAGE_SIZE}&pagination[page]=${page}&filters[user][id]=${session.user.id}`,
+    try {
+      setLoadingSummary(true);
+      setError(null);
+
+      let allRecords: Trade[] = [];
+      let page = 1;
+      let totalPages = 1;
+      const pageSize = 100;
+
+      while (page <= totalPages) {
+        const resp = await axios.get<TradesResponse>(
+          `${process.env.NEXT_PUBLIC_STRAPI_URL}/api/trades?populate=stock&sort=createdAt:asc&filters[user][id]=${session.user.id}`,
           {
             headers: { Authorization: `Bearer ${session.jwt}` },
+            params: {
+              'pagination[page]': page,
+              'pagination[pageSize]': pageSize,
+            },
           }
         );
 
-        const trades: Trade[] = response.data.data;
-        const calculatedHoldings = calculateHoldings(trades);
-        setHoldings(calculatedHoldings);
-        setPageCount(response.data.meta?.pagination?.pageCount || 1);
-      } catch {
-        setError('Failed to fetch holdings');
-      } finally {
-        setLoading(false);
+        allRecords = allRecords.concat(resp.data.data);
+        totalPages = resp.data.meta?.pagination?.pageCount || 1;
+        page++;
       }
-    },
-    [session, PAGE_SIZE]
-  );
+
+      setAllTrades(allRecords);
+    } catch (err: unknown) {
+      if (err instanceof Error)
+        setError('Failed to fetch all trades: ' + err.message);
+      else setError('Failed to fetch all trades');
+    } finally {
+      setLoadingSummary(false);
+    }
+  }, [session]);
 
   useEffect(() => {
-    fetchTrades(page);
-  }, [fetchTrades, page]);
+    fetchAllTrades();
+  }, [fetchAllTrades]);
 
-  const columns = [
+  // Aggregate Trades per Stock
+  const aggregatedData: AggregatedTrade[] = allTrades.reduce((acc, trade) => {
+    const stockCode = trade.stock?.stockCode || 'N/A';
+    const existing = acc.find((s) => s.stockCode === stockCode);
+    const shares = Number(trade.numberOfShares || 0);
+
+    if (existing) {
+      if (trade.tradeType === 'Bought') existing.bought += shares;
+      else if (trade.tradeType === 'Sold') existing.sold += shares;
+    } else {
+      acc.push({
+        stockCode,
+        stockTitle: trade.stock?.stockTitle || '',
+        bought: trade.tradeType === 'Bought' ? shares : 0,
+        sold: trade.tradeType === 'Sold' ? shares : 0,
+      });
+    }
+
+    return acc;
+  }, [] as AggregatedTrade[]);
+
+  const positiveNetData = aggregatedData.filter(
+    (item) => item.bought - item.sold > 0
+  );
+
+  const summaryTotalPages = Math.ceil(positiveNetData.length / PAGE_SIZE);
+  const paginatedSummary = positiveNetData.slice(
+    (summaryPage - 1) * PAGE_SIZE,
+    summaryPage * PAGE_SIZE
+  );
+
+  const summaryColumns = [
     {
       key: 'stock',
       header: 'Stock',
-      accessor: (h: Holding) => `${h.stock.stockCode} – ${h.stock.stockTitle}`,
+      accessor: (row: AggregatedTrade) =>
+        `${row.stockCode} - ${row.stockTitle}`,
     },
-    { key: 'shares', header: 'Shares', accessor: (h: Holding) => h.shares },
     {
-      key: 'avgBuyRate',
-      header: 'Avg Buy Rate',
-      accessor: (h: Holding) =>
-        new Intl.NumberFormat('en-PK', {
-          style: 'currency',
-          currency: 'PKR',
-          minimumFractionDigits: 2,
-        }).format(h.avgBuyRate),
+      key: 'bought',
+      header: 'Bought',
+      accessor: (row: AggregatedTrade) => row.bought,
+    },
+    {
+      key: 'sold',
+      header: 'Sold',
+      accessor: (row: AggregatedTrade) => row.sold,
+    },
+    {
+      key: 'net',
+      header: 'Net',
+      accessor: (row: AggregatedTrade) => row.bought - row.sold,
     },
   ];
 
-  if (loading)
+  if (loadingSummary)
     return (
       <div className="bg-white shadow rounded-lg p-6 mb-8">
-        Loading holdings...
+        Loading Table...
       </div>
     );
   if (error)
@@ -144,19 +138,19 @@ export default function HoldingsPage() {
   return (
     <div className="bg-white shadow rounded-lg p-6 mb-8 w-full">
       <h2 className="text-xl font-semibold mb-4 text-center sm:text-left">
-        Current Holdings
+        Trades Summary
       </h2>
 
-      {holdings.length > 0 ? (
+      {aggregatedData.length > 0 ? (
         <Table
-          data={holdings}
-          columns={columns}
-          currentPage={page}
-          pageCount={pageCount}
-          onPageChange={setPage}
+          data={paginatedSummary}
+          columns={summaryColumns}
+          currentPage={summaryPage}
+          pageCount={summaryTotalPages}
+          onPageChange={setSummaryPage}
         />
       ) : (
-        <p className="text-gray-500 text-center py-4">No holdings available</p>
+        <p className="text-gray-500 text-center py-4">No Records found.</p>
       )}
     </div>
   );
