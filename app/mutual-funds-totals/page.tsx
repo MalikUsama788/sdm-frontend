@@ -25,6 +25,7 @@ export default function MutualFundsTotalsPage() {
   const { data: session } = useSession();
 
   const [fundGraphs, setFundGraphs] = useState<FundGraphData[]>([]);
+  const [selectedFund, setSelectedFund] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,6 +104,7 @@ export default function MutualFundsTotalsPage() {
 
         if (allRecords.length === 0) {
           setFundGraphs([]);
+          setSelectedFund(null);
         } else {
           const allFunds = Array.from(new Set(allRecords.map((r) => r.fund)));
           const grouped: FundGraphData[] = allFunds.map((f) => ({
@@ -113,6 +115,7 @@ export default function MutualFundsTotalsPage() {
             dateFilter,
           }));
           setFundGraphs(grouped);
+          setSelectedFund(grouped[0].fund);
         }
       } catch (err: unknown) {
         if (err instanceof Error)
@@ -212,119 +215,147 @@ export default function MutualFundsTotalsPage() {
         </div>
       </div>
 
-      {/* Date filter */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-6">
-        <label>Date Range:</label>
-        <select
-          value={selectedDateFilter}
-          onChange={(e) =>
-            handleDateFilterChange(e.target.value as DateFilterType)
-          }
-          className="border border-gray-300 rounded-md p-2 text-sm w-full sm:w-auto"
-        >
-          <option value="L30">Last 30 Days (L30)</option>
-          <option value="MTD">Month to Date (MTD)</option>
-          <option value="YTD">Year to Date (YTD)</option>
-          <option value="FYTD">Fiscal Year to Date (FYTD)</option>
-        </select>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        {/* Date filter */}
+        <div className="flex items-center gap-2">
+          <label>Date Range:</label>
+          <select
+            value={selectedDateFilter}
+            onChange={(e) =>
+              handleDateFilterChange(e.target.value as DateFilterType)
+            }
+            className="border border-gray-300 rounded-md p-2 text-sm w-full sm:w-auto"
+          >
+            <option value="L30">Last 30 Days (L30)</option>
+            <option value="MTD">Month to Date (MTD)</option>
+            <option value="YTD">Year to Date (YTD)</option>
+            <option value="FYTD">Fiscal Year to Date (FYTD)</option>
+          </select>
+        </div>
+
+        {/* Fund Selection */}
+        {fundGraphs.length > 0 && (
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="whitespace-nowrap">Select Fund:</span>
+            {fundGraphs.map((g) => (
+              <label
+                key={g.fund}
+                className="flex items-center space-x-2 cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="selectedFund"
+                  value={g.fund}
+                  checked={selectedFund === g.fund}
+                  onChange={() => setSelectedFund(g.fund)}
+                />
+                <span>{g.fund}</span>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* No records for date range */}
-      {fundGraphs.length === 0 && (
-        <div className="text-center text-gray-500 mt-4">No Records found.</div>
-      )}
+      {/* Selected Fund Graph & Table */}
+      {selectedFund &&
+        (() => {
+          const g = fundGraphs.find((f) => f.fund === selectedFund);
+          if (!g) return null;
 
-      {fundGraphs.map((g) => {
-        const startIdx = (g.currentPage - 1) * PAGE_SIZE;
-        const endIdx = startIdx + PAGE_SIZE;
-        const tableData = [...g.records].sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-        );
-        const paginatedData = tableData.slice(startIdx, endIdx);
-        const totalPages = Math.ceil(g.records.length / PAGE_SIZE);
+          const startIdx = (g.currentPage - 1) * PAGE_SIZE;
+          const endIdx = startIdx + PAGE_SIZE;
+          const tableData = [...g.records].sort(
+            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+          );
+          const paginatedData = tableData.slice(startIdx, endIdx);
+          const totalPages = Math.ceil(g.records.length / PAGE_SIZE);
 
-        return (
-          <div key={g.fund} className="mb-10">
-            <div className="flex items-center mb-2 gap-4">
-              <h3 className="text-lg font-bold">{g.fund}</h3>
-              <label className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={g.showTable}
-                  onChange={() => toggleTable(g.fund)}
-                />
-                <span>Show Table</span>
-              </label>
-            </div>
-
-            {g.records.length > 0 ? (
-              <>
-                {graphType === 'line' ? (
-                  <LineGraph
-                    data={g.records as unknown as Record<string, unknown>[]}
-                    xKey="date"
-                    lines={[
-                      {
-                        dataKey: 'totalAtTime',
-                        color: '#8884d8',
-                        name: 'Investment',
-                      },
-                      {
-                        dataKey: 'amount',
-                        color: '#82ca9d',
-                        name: 'Total Value',
-                      },
-                    ]}
-                    xFormatter={(d) => {
-                      const date =
-                        d instanceof Date ? d : new Date(d as string | number);
-                      return format(date, 'MMM d');
-                    }}
-                    height={300}
+          return (
+            <div key={g.fund} className="mb-10">
+              <div className="flex items-center mb-2 gap-4">
+                <h3 className="text-lg font-bold">{g.fund}</h3>
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={g.showTable}
+                    onChange={() => toggleTable(g.fund)}
                   />
-                ) : (
-                  <BarGraph
-                    data={g.records as unknown as Record<string, unknown>[]}
-                    xKey="date"
-                    bars={[
-                      {
-                        dataKey: 'totalAtTime',
-                        color: '#8884d8',
-                        name: 'Investment',
-                      },
-                      {
-                        dataKey: 'amount',
-                        color: '#82ca9d',
-                        name: 'Total Value',
-                      },
-                    ]}
-                    xFormatter={(d) => {
-                      const date =
-                        d instanceof Date ? d : new Date(d as string | number);
-                      return format(date, 'MMM d');
-                    }}
-                    height={300}
-                  />
-                )}
-
-                {g.showTable && (
-                  <Table
-                    data={paginatedData}
-                    columns={columns}
-                    currentPage={g.currentPage}
-                    pageCount={totalPages}
-                    onPageChange={(page) => handlePageChange(g.fund, page)}
-                  />
-                )}
-              </>
-            ) : (
-              <div className="text-center text-gray-500 mt-2">
-                No Records found.
+                  <span>Show Table</span>
+                </label>
               </div>
-            )}
-          </div>
-        );
-      })}
+
+              {g.records.length > 0 ? (
+                <>
+                  {graphType === 'line' ? (
+                    <LineGraph
+                      data={g.records as unknown as Record<string, unknown>[]}
+                      xKey="date"
+                      lines={[
+                        {
+                          dataKey: 'totalAtTime',
+                          color: '#8884d8',
+                          name: 'Investment',
+                        },
+                        {
+                          dataKey: 'amount',
+                          color: '#82ca9d',
+                          name: 'Total Value',
+                        },
+                      ]}
+                      xFormatter={(d) => {
+                        const date =
+                          d instanceof Date
+                            ? d
+                            : new Date(d as string | number);
+                        return format(date, 'MMM d');
+                      }}
+                      height={300}
+                    />
+                  ) : (
+                    <BarGraph
+                      data={g.records as unknown as Record<string, unknown>[]}
+                      xKey="date"
+                      bars={[
+                        {
+                          dataKey: 'totalAtTime',
+                          color: '#8884d8',
+                          name: 'Investment',
+                        },
+                        {
+                          dataKey: 'amount',
+                          color: '#82ca9d',
+                          name: 'Total Value',
+                        },
+                      ]}
+                      xFormatter={(d) => {
+                        const date =
+                          d instanceof Date
+                            ? d
+                            : new Date(d as string | number);
+                        return format(date, 'MMM d');
+                      }}
+                      height={300}
+                    />
+                  )}
+
+                  {g.showTable && (
+                    <Table
+                      data={paginatedData}
+                      columns={columns}
+                      currentPage={g.currentPage}
+                      pageCount={totalPages}
+                      onPageChange={(page) => handlePageChange(g.fund, page)}
+                    />
+                  )}
+                </>
+              ) : (
+                <div className="text-center text-gray-500 mt-2">
+                  No Records found.
+                </div>
+              )}
+            </div>
+          );
+        })()}
     </div>
   );
 }
